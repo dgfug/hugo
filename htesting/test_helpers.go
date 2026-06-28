@@ -20,13 +20,28 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
+
+	qt "github.com/frankban/quicktest"
 
 	"github.com/spf13/afero"
 )
 
+// IsTest reports whether we're running as a test.
+var IsTest bool
+
+func init() {
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.") {
+			IsTest = true
+			break
+		}
+	}
+}
+
 // CreateTempDir creates a temp dir in the given filesystem and
-// returns the dirnam and a func that removes it when done.
+// returns the dirname and a func that removes it when done.
 func CreateTempDir(fs afero.Fs, prefix string) (string, func(), error) {
 	tempDir, err := afero.TempDir(fs, "", prefix)
 	if err != nil {
@@ -90,9 +105,22 @@ func DiffStrings(s1, s2 string) []string {
 	return DiffStringSlices(strings.Fields(s1), strings.Fields(s2))
 }
 
+// SkipSlowTestUnlessCI skips the test unless we're running in a CI server.
+// Note that you can set CI_LOCAL=1 to run slow tests locally in a CI-like setup.
+func SkipSlowTestUnlessCI(t testing.TB) {
+	if !IsCI() {
+		t.Skip("skipping slow test in CI")
+	}
+}
+
 // IsCI reports whether we're running in a CI server.
 func IsCI() bool {
 	return (os.Getenv("CI") != "" || os.Getenv("CI_LOCAL") != "") && os.Getenv("CIRCLE_BRANCH") == ""
+}
+
+// IsRealCI reports whether we're running in a CI server, but not in a local CI setup.
+func IsRealCI() bool {
+	return IsCI() && os.Getenv("CI_LOCAL") == ""
 }
 
 // IsGitHubAction reports whether we're running in a GitHub Action.
@@ -101,15 +129,20 @@ func IsGitHubAction() bool {
 }
 
 // SupportsAll reports whether the running system supports all Hugo features,
-// e.g. Asciidoc, Pandoc etc.
+// e.g. AsciiDoc, Pandoc etc.
 func SupportsAll() bool {
-	return IsGitHubAction()
+	return IsGitHubAction() || os.Getenv("CI_LOCAL") != ""
 }
 
 // GoMinorVersion returns the minor version of the current Go version,
 // e.g. 16 for Go 1.16.
 func GoMinorVersion() int {
 	return extractMinorVersionFromGoTag(runtime.Version())
+}
+
+// IsWindows reports whether this runs on Windows.
+func IsWindows() bool {
+	return runtime.GOOS == "windows"
 }
 
 var goMinorVersionRe = regexp.MustCompile(`go1.(\d*)`)
@@ -128,5 +161,33 @@ func extractMinorVersionFromGoTag(tag string) int {
 
 	// a commit hash, not useful.
 	return -1
+}
 
+// NewPinnedRunner creates a new runner that will only Run tests matching the given regexp.
+// This is added mostly to use in combination with https://marketplace.visualstudio.com/items?itemName=windmilleng.vscode-go-autotest
+func NewPinnedRunner(t testing.TB, pinnedTestRe string) *PinnedRunner {
+	if pinnedTestRe == "" {
+		pinnedTestRe = ".*"
+	}
+	pinnedTestRe = strings.ReplaceAll(pinnedTestRe, "_", " ")
+	re := regexp.MustCompile("(?i)" + pinnedTestRe)
+	return &PinnedRunner{
+		c:  qt.New(t),
+		re: re,
+	}
+}
+
+type PinnedRunner struct {
+	c  *qt.C
+	re *regexp.Regexp
+}
+
+func (r *PinnedRunner) Run(name string, f func(c *qt.C)) bool {
+	if !r.re.MatchString(name) {
+		if IsGitHubAction() {
+			r.c.Fatal("found pinned test when running in CI")
+		}
+		return true
+	}
+	return r.c.Run(name, f)
 }

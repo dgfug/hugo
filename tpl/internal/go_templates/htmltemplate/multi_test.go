@@ -4,14 +4,15 @@
 
 // Tests for multiple-template execution, copied from text/template.
 
-// +build go1.13,!windows
+//go:build !windows
+// +build !windows
 
 package template
 
 import (
 	"archive/zip"
-	"bytes"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/gohugoio/hugo/tpl/internal/go_templates/texttemplate/parse"
@@ -248,7 +249,7 @@ func TestEmptyTemplate(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		buf := &bytes.Buffer{}
+		buf := &strings.Builder{}
 		if err := m.Execute(buf, c.in); err != nil {
 			t.Error(i, err)
 			continue
@@ -267,7 +268,7 @@ func TestIssue19294(t *testing.T) {
 	// by the contents of "stylesheet", but if the internal map associating
 	// names with templates is built in the wrong order, the empty block
 	// looks non-empty and this doesn't happen.
-	var inlined = map[string]string{
+	inlined := map[string]string{
 		"stylesheet": `{{define "stylesheet"}}stylesheet{{end}}`,
 		"xhtml":      `{{block "stylesheet" .}}{{end}}`,
 	}
@@ -283,7 +284,7 @@ func TestIssue19294(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		var buf bytes.Buffer
+		var buf strings.Builder
 		res.Execute(&buf, 0)
 		if buf.String() != "stylesheet" {
 			t.Fatalf("iteration %d: got %q; expected %q", i, buf.String(), "stylesheet")

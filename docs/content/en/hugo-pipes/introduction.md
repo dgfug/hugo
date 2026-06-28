@@ -1,57 +1,62 @@
 ---
-title: Hugo Pipes Introduction
+title: Hugo Pipes
+linkTitle: Introduction
 description: Hugo Pipes is Hugo's asset processing set of functions.
-date: 2018-07-14
-publishdate: 2018-07-14
-lastmod: 2018-07-14
-categories: [asset management]
+categories: []
 keywords: []
-menu:
-  docs:
-    parent: "pipes"
-    weight: 20
-weight: 01
-sections_weight: 01
-draft: false
+weight: 10
 aliases: [/assets/]
 ---
 
-### Asset directory
+## Find resources in assets
 
-Asset files must be stored in the asset directory. This is `/assets` by default, but can be configured via the configuration file's `assetDir` key.
+This is about global and remote resources.
 
-### From file to resource
+global resource
+: A file within the `assets` directory, or within any directory [mounted][] to the `assets` directory.
 
-In order to process an asset with Hugo Pipes, it must be retrieved as a resource using `resources.Get`, which takes one argument: the filepath of the file relative to the asset directory.
+remote resource
+: A file on a remote server, accessible via HTTP or HTTPS.
+
+For `.Page` scoped resources, see the [page resources][] section.
+
+## Get a resource
+
+In order to process an asset with Hugo Pipes, it must be retrieved as a resource.
+
+For global resources, use:
+
+- [`resources.ByType`][]
+- [`resources.Get`][]
+- [`resources.GetMatch`][]
+- [`resources.Match`][]
+
+For remote resources, use:
+
+- [`resources.GetRemote`][]
+
+## Copy a resource
+
+See the [`resources.Copy`][] function.
+
+## Asset directory
+
+Asset files must be stored in the asset directory. This is `assets` by default, but can be configured via the configuration file's `assetDir` key.
+
+## Asset publishing
+
+Hugo publishes assets to the `publishDir` (typically `public`) when you invoke `.Permalink`, `.RelPermalink`, or `.Publish`. You can use `.Content` to inline the asset.
+
+## Go Pipes
+
+For improved readability, the Hugo Pipes examples of this documentation will be written using [Go Pipes][]:
 
 ```go-html-template
-{{ $style := resources.Get "sass/main.scss" }}
-```
-
-### Asset publishing
-
-Assets will only be published (to `/public`) if `.Permalink` or `.RelPermalink` is used.
-
-### Go Pipes
-
-For improved readability, the Hugo Pipes examples of this documentation will be written using [Go Pipes](/templates/introduction/#pipes):
-```go-html-template
-{{ $style := resources.Get "sass/main.scss" | resources.ToCSS | resources.Minify | resources.Fingerprint }}
+{{ $style := resources.Get "sass/main.scss" | css.Sass | resources.Minify | resources.Fingerprint }}
 <link rel="stylesheet" href="{{ $style.Permalink }}">
 ```
 
-### Method aliases
-
-Each Hugo Pipes `resources` transformation method uses a __camelCased__ alias (`toCSS` for `resources.ToCSS`).
-Non-transformation methods deprived of such aliases are `resources.Get`, `resources.FromString`, `resources.ExecuteAsTemplate` and `resources.Concat`.
-
-The example above can therefore also be written as follows:
-```go-html-template
-{{ $style := resources.Get "sass/main.scss" | toCSS | minify | fingerprint }}
-<link rel="stylesheet" href="{{ $style.Permalink }}">
-```
-
-### Caching
+## Caching
 
 Hugo Pipes invocations are cached based on the entire _pipe chain_.
 
@@ -62,3 +67,13 @@ An example of a pipe chain is:
 ```
 
 The pipe chain is only invoked the first time it is encountered in a site build, and results are otherwise loaded from cache. As such, Hugo Pipes can be used in templates which are executed thousands or millions of times without negatively impacting the build performance.
+
+[Go Pipes]: /templates/introduction/#pipes
+[`resources.ByType`]: /functions/resources/bytype/
+[`resources.Copy`]: /functions/resources/copy/
+[`resources.GetMatch`]: /functions/resources/getmatch/
+[`resources.GetRemote`]: /functions/resources/getremote/
+[`resources.Get`]: /functions/resources/get/
+[`resources.Match`]: /functions/resources/match/
+[mounted]: /configuration/module/#mounts
+[page resources]: /content-management/page-resources/

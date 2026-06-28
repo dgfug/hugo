@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build go1.13,!windows
+//go:build !windows
+// +build !windows
 
 package template
 
@@ -50,7 +51,7 @@ func TestURLFilters(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		escaper func(...interface{}) string
+		escaper func(...any) string
 		escaped string
 	}{
 		{

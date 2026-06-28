@@ -35,9 +35,9 @@ func New() *Namespace {
 // Namespace provides template functions for the "crypto" namespace.
 type Namespace struct{}
 
-// MD5 hashes the given input and returns its MD5 checksum.
-func (ns *Namespace) MD5(in interface{}) (string, error) {
-	conv, err := cast.ToStringE(in)
+// MD5 hashes the v and returns its MD5 checksum.
+func (ns *Namespace) MD5(v any) (string, error) {
+	conv, err := cast.ToStringE(v)
 	if err != nil {
 		return "", err
 	}
@@ -46,9 +46,9 @@ func (ns *Namespace) MD5(in interface{}) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// SHA1 hashes the given input and returns its SHA1 checksum.
-func (ns *Namespace) SHA1(in interface{}) (string, error) {
-	conv, err := cast.ToStringE(in)
+// SHA1 hashes v and returns its SHA1 checksum.
+func (ns *Namespace) SHA1(v any) (string, error) {
+	conv, err := cast.ToStringE(v)
 	if err != nil {
 		return "", err
 	}
@@ -57,9 +57,9 @@ func (ns *Namespace) SHA1(in interface{}) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
-// SHA256 hashes the given input and returns its SHA256 checksum.
-func (ns *Namespace) SHA256(in interface{}) (string, error) {
-	conv, err := cast.ToStringE(in)
+// SHA256 hashes v and returns its SHA256 checksum.
+func (ns *Namespace) SHA256(v any) (string, error) {
+	conv, err := cast.ToStringE(v)
 	if err != nil {
 		return "", err
 	}
@@ -69,7 +69,7 @@ func (ns *Namespace) SHA256(in interface{}) (string, error) {
 }
 
 // HMAC returns a cryptographic hash that uses a key to sign a message.
-func (ns *Namespace) HMAC(h interface{}, k interface{}, m interface{}) (string, error) {
+func (ns *Namespace) HMAC(h any, k any, m any, e ...any) (string, error) {
 	ha, err := cast.ToStringE(h)
 	if err != nil {
 		return "", err
@@ -105,5 +105,20 @@ func (ns *Namespace) HMAC(h interface{}, k interface{}, m interface{}) (string, 
 		return "", err
 	}
 
-	return hex.EncodeToString(mac.Sum(nil)[:]), nil
+	encoding := "hex"
+	if len(e) > 0 && e[0] != nil {
+		encoding, err = cast.ToStringE(e[0])
+		if err != nil {
+			return "", err
+		}
+	}
+
+	switch encoding {
+	case "binary":
+		return string(mac.Sum(nil)[:]), nil
+	case "hex":
+		return hex.EncodeToString(mac.Sum(nil)[:]), nil
+	default:
+		return "", fmt.Errorf("%q is not a supported encoding method", encoding)
+	}
 }

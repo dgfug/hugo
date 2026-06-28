@@ -1,6 +1,13 @@
-/.idea
-/public
-node_modules
-nohup.out
 .DS_Store
+.hugo_build.lock
+.hvm
+/.idea
+/.vscode
+/dist
+/public
+/resources
+hugo_stats.json
+node_modules/
+nohup.out
+package-lock.json
 trace.out

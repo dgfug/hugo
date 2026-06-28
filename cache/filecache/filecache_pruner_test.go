@@ -11,13 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package filecache
+package filecache_test
 
 import (
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/gohugoio/hugo/cache/filecache"
 	"github.com/spf13/afero"
 
 	qt "github.com/frankban/quicktest"
@@ -26,9 +28,10 @@ import (
 func TestPrune(t *testing.T) {
 	t.Parallel()
 
-	c := qt.New(t)
+	synctest.Test(t, func(t *testing.T) {
+		c := qt.New(t)
 
-	configStr := `
+		configStr := `
 resourceDir = "myresources"
 contentDir = "content"
 dataDir = "data"
@@ -38,12 +41,9 @@ assetDir = "assets"
 archeTypedir = "archetypes"
 
 [caches]
-[caches.getjson]
+[caches.misc]
 maxAge = "200ms"
 dir = "/cache/c"
-[caches.getcsv]
-maxAge = "200ms"
-dir = "/cache/d"
 [caches.assets]
 maxAge = "200ms"
 dir = ":resourceDir/_gen"
@@ -52,59 +52,64 @@ maxAge = "200ms"
 dir = ":resourceDir/_gen"
 `
 
-	for _, name := range []string{cacheKeyGetCSV, cacheKeyGetJSON, cacheKeyAssets, cacheKeyImages} {
-		msg := qt.Commentf("cache: %s", name)
-		p := newPathsSpec(t, afero.NewMemMapFs(), configStr)
-		caches, err := NewCaches(p)
-		c.Assert(err, qt.IsNil)
-		cache := caches[name]
-		for i := 0; i < 10; i++ {
-			id := fmt.Sprintf("i%d", i)
-			cache.GetOrCreateBytes(id, func() ([]byte, error) {
+		for _, name := range []string{filecache.CacheKeyAssets, filecache.CacheKeyImages} {
+			msg := qt.Commentf("cache: %s", name)
+			fs := afero.NewMemMapFs()
+			p := newPathsSpec(t, fs, configStr)
+			fileCachConfig := p.Cfg.GetConfigSection("caches").(filecache.Configs)
+			caches, err := filecache.NewCaches(fileCachConfig, fs)
+			c.Assert(err, qt.IsNil)
+			caches.SetResourceFs(fs)
+			cache := caches[name]
+			for i := range 10 {
+				id := fmt.Sprintf("i%d", i)
+				cache.GetOrCreateBytes(id, func() ([]byte, error) {
+					return []byte("abc"), nil
+				})
+				if i == 4 {
+					// This will expire the first 5
+					time.Sleep(201 * time.Millisecond)
+				}
+			}
+
+			count, err := caches.Prune()
+			c.Assert(err, qt.IsNil)
+			c.Assert(count, qt.Equals, 5, msg)
+
+			for i := range 10 {
+				id := fmt.Sprintf("i%d", i)
+				v := cache.GetString(id)
+				if i < 5 {
+					c.Assert(v, qt.Equals, "")
+				} else {
+					c.Assert(v, qt.Equals, "abc")
+				}
+			}
+
+			caches, err = filecache.NewCaches(fileCachConfig, fs)
+			c.Assert(err, qt.IsNil)
+			caches.SetResourceFs(fs)
+			cache = caches[name]
+			// Touch one and then prune.
+			cache.GetOrCreateBytes("i5", func() ([]byte, error) {
 				return []byte("abc"), nil
 			})
-			if i == 4 {
-				// This will expire the first 5
-				time.Sleep(201 * time.Millisecond)
+
+			count, err = caches.Prune()
+			c.Assert(err, qt.IsNil)
+			c.Assert(count, qt.Equals, 4)
+
+			// Now only the i5 should be left.
+			for i := range 10 {
+				id := fmt.Sprintf("i%d", i)
+				v := cache.GetString(id)
+				if i != 5 {
+					c.Assert(v, qt.Equals, "")
+				} else {
+					c.Assert(v, qt.Equals, "abc")
+				}
 			}
+
 		}
-
-		count, err := caches.Prune()
-		c.Assert(err, qt.IsNil)
-		c.Assert(count, qt.Equals, 5, msg)
-
-		for i := 0; i < 10; i++ {
-			id := fmt.Sprintf("i%d", i)
-			v := cache.getString(id)
-			if i < 5 {
-				c.Assert(v, qt.Equals, "")
-			} else {
-				c.Assert(v, qt.Equals, "abc")
-			}
-		}
-
-		caches, err = NewCaches(p)
-		c.Assert(err, qt.IsNil)
-		cache = caches[name]
-		// Touch one and then prune.
-		cache.GetOrCreateBytes("i5", func() ([]byte, error) {
-			return []byte("abc"), nil
-		})
-
-		count, err = caches.Prune()
-		c.Assert(err, qt.IsNil)
-		c.Assert(count, qt.Equals, 4)
-
-		// Now only the i5 should be left.
-		for i := 0; i < 10; i++ {
-			id := fmt.Sprintf("i%d", i)
-			v := cache.getString(id)
-			if i != 5 {
-				c.Assert(v, qt.Equals, "")
-			} else {
-				c.Assert(v, qt.Equals, "abc")
-			}
-		}
-
-	}
+	})
 }

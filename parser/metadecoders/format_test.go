@@ -16,8 +16,6 @@ package metadecoders
 import (
 	"testing"
 
-	"github.com/gohugoio/hugo/media"
-
 	qt "github.com/frankban/quicktest"
 )
 
@@ -30,6 +28,7 @@ func TestFormatFromString(t *testing.T) {
 		{"json", JSON},
 		{"yaml", YAML},
 		{"yml", YAML},
+		{"xml", XML},
 		{"toml", TOML},
 		{"config.toml", TOML},
 		{"tOMl", TOML},
@@ -40,28 +39,13 @@ func TestFormatFromString(t *testing.T) {
 	}
 }
 
-func TestFormatFromMediaType(t *testing.T) {
-	c := qt.New(t)
-	for _, test := range []struct {
-		m      media.Type
-		expect Format
-	}{
-		{media.JSONType, JSON},
-		{media.YAMLType, YAML},
-		{media.TOMLType, TOML},
-		{media.CalendarType, ""},
-	} {
-		c.Assert(FormatFromMediaType(test.m), qt.Equals, test.expect)
-	}
-}
-
 func TestFormatFromContentString(t *testing.T) {
 	t.Parallel()
 	c := qt.New(t)
 
 	for i, test := range []struct {
 		data   string
-		expect interface{}
+		expect any
 	}{
 		{`foo = "bar"`, TOML},
 		{`   foo = "bar"`, TOML},
@@ -70,6 +54,7 @@ func TestFormatFromContentString(t *testing.T) {
 		{`foo:"bar"`, YAML},
 		{`{ "foo": "bar"`, JSON},
 		{`a,b,c"`, CSV},
+		{`<foo>bar</foo>"`, XML},
 		{`asdfasdf`, Format("")},
 		{``, Format("")},
 	} {

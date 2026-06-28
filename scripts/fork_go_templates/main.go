@@ -2,14 +2,12 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/gohugoio/hugo/common/hexec"
 
 	"github.com/gohugoio/hugo/common/hugio"
 
@@ -17,8 +15,8 @@ import (
 )
 
 func main() {
-	// TODO(bep) git checkout tag
-	// The current is built with Go version 2f0da6d9e29d9b9d5a4d10427ca9f71d12bbacc8 / go1.16
+	// The current is built with 2dc996f71b0ebafb77e64433e58333e049488a3c go1.26.3
+	// TODO(bep) preserve the staticcheck.conf file.
 	fmt.Println("Forking ...")
 	defer fmt.Println("Done ...")
 
@@ -40,7 +38,7 @@ func main() {
 
 const (
 	// TODO(bep)
-	goSource = "/Users/bep/dev/go/dump/go/src"
+	goSource = "/Users/bep/dev/go/misc/go/src"
 	forkRoot = "../../tpl/internal/go_templates"
 )
 
@@ -164,11 +162,15 @@ func copyGoPackage(dst, src string) {
 
 func doWithGoFiles(dir string,
 	rewrite func(name string),
-	transform func(name, in string) string) {
+	transform func(name, in string) string,
+) {
 	if rewrite == nil && transform == nil {
 		return
 	}
 	must(filepath.Walk(filepath.Join(forkRoot, dir), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
 		if info.IsDir() {
 			return nil
 		}
@@ -187,7 +189,7 @@ func doWithGoFiles(dir string,
 			return nil
 		}
 
-		data, err := ioutil.ReadFile(path)
+		data, err := os.ReadFile(path)
 		must(err)
 		f, err := os.Create(path)
 		must(err)
@@ -205,7 +207,7 @@ func removeAll(expression, content string) string {
 }
 
 func rewrite(filename, rule string) {
-	cmf, _ := hexec.SafeCommand("gofmt", "-w", "-r", rule, filename)
+	cmf := exec.Command("gofmt", "-w", "-r", rule, filename)
 	out, err := cmf.CombinedOutput()
 	if err != nil {
 		log.Fatal("gofmt failed:", string(out))
@@ -213,7 +215,8 @@ func rewrite(filename, rule string) {
 }
 
 func goimports(dir string) {
-	cmf, _ := hexec.SafeCommand("goimports", "-w", dir)
+	// Needs go install golang.org/x/tools/cmd/goimports@latest
+	cmf := exec.Command("goimports", "-w", dir)
 	out, err := cmf.CombinedOutput()
 	if err != nil {
 		log.Fatal("goimports failed:", string(out))
@@ -221,7 +224,7 @@ func goimports(dir string) {
 }
 
 func gofmt(dir string) {
-	cmf, _ := hexec.SafeCommand("gofmt", "-w", dir)
+	cmf := exec.Command("gofmt", "-w", dir)
 	out, err := cmf.CombinedOutput()
 	if err != nil {
 		log.Fatal("gofmt failed:", string(out))

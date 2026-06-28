@@ -4,9 +4,22 @@ package template
 
 import "strconv"
 
-const _attr_name = "attrNoneattrScriptattrScriptTypeattrStyleattrURLattrSrcset"
+func _() {
+	// An "invalid array index" compiler error signifies that the constant values have changed.
+	// Re-run the stringer command to generate them again.
+	var x [1]struct{}
+	_ = x[attrNone-0]
+	_ = x[attrScript-1]
+	_ = x[attrScriptType-2]
+	_ = x[attrStyle-3]
+	_ = x[attrURL-4]
+	_ = x[attrSrcset-5]
+	_ = x[attrMetaContent-6]
+}
 
-var _attr_index = [...]uint8{0, 8, 18, 32, 41, 48, 58}
+const _attr_name = "attrNoneattrScriptattrScriptTypeattrStyleattrURLattrSrcsetattrMetaContent"
+
+var _attr_index = [...]uint8{0, 8, 18, 32, 41, 48, 58, 73}
 
 func (i attr) String() string {
 	if i >= attr(len(_attr_index)-1) {

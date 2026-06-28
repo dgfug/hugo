@@ -15,15 +15,14 @@ package babel
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
 	"io"
-	"io/ioutil"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
 
-	"github.com/cli/safeexec"
 	"github.com/gohugoio/hugo/common/hexec"
 	"github.com/gohugoio/hugo/common/loggers"
 
@@ -35,7 +34,6 @@ import (
 	"github.com/gohugoio/hugo/common/herrors"
 	"github.com/gohugoio/hugo/resources"
 	"github.com/gohugoio/hugo/resources/resource"
-	"github.com/pkg/errors"
 )
 
 // Options from https://babeljs.io/docs/en/options
@@ -51,7 +49,7 @@ type Options struct {
 }
 
 // DecodeOptions decodes options to and generates command flags
-func DecodeOptions(m map[string]interface{}) (opts Options, err error) {
+func DecodeOptions(m map[string]any) (opts Options, err error) {
 	if m == nil {
 		return
 	}
@@ -59,15 +57,15 @@ func DecodeOptions(m map[string]interface{}) (opts Options, err error) {
 	return
 }
 
-func (opts Options) toArgs() []string {
-	var args []string
+func (opts Options) sourceMapEnabled() bool {
+	return opts.SourceMap != "" && opts.SourceMap != "none"
+}
 
-	// external is not a known constant on the babel command line
-	// .sourceMaps must be a boolean, "inline", "both", or undefined
-	switch opts.SourceMap {
-	case "external":
-		args = append(args, "--source-maps")
-	case "inline":
+func (opts Options) toArgs() []any {
+	var args []any
+
+	// Always use inline source maps; Transform extracts to external file if needed.
+	if opts.sourceMapEnabled() {
 		args = append(args, "--source-maps=inline")
 	}
 	if opts.Minified {
@@ -115,53 +113,50 @@ func (t *babelTransformation) Key() internal.ResourceTransformationKey {
 // npm install -g @babel/preset-env
 // Instead of installing globally, you can also install everything as a dev-dependency (--save-dev instead of -g)
 func (t *babelTransformation) Transform(ctx *resources.ResourceTransformationCtx) error {
-	const localBabelPath = "node_modules/.bin/"
 	const binaryName = "babel"
 
-	// Try first in the project's node_modules.
-	csiBinPath := filepath.Join(t.rs.WorkingDir, localBabelPath, binaryName)
+	ex := t.rs.ExecHelper
 
-	binary := csiBinPath
-
-	if _, err := safeexec.LookPath(binary); err != nil {
-		// Try PATH
-		binary = binaryName
-		if _, err := safeexec.LookPath(binary); err != nil {
-			// This may be on a CI server etc. Will fall back to pre-built assets.
-			return herrors.ErrFeatureNotAvailable
-		}
+	if err := ex.Sec().CheckAllowedExec(binaryName); err != nil {
+		return err
 	}
 
 	var configFile string
-	logger := t.rs.Logger
+	infol := t.rs.Logger.InfoCommand(binaryName)
+	infoW := loggers.LevelLoggerToWriter(infol)
 
 	var errBuf bytes.Buffer
-	infoW := loggers.LoggerToWriterWithPrefix(logger.Info(), "babel")
 
 	if t.options.Config != "" {
 		configFile = t.options.Config
 	} else {
-		configFile = "babel.config.js"
+		for _, name := range []string{"babel.config.js", "babel.config.mjs", "babel.config.cjs"} {
+			configFile = t.rs.BaseFs.ResolveJSConfigFile(name)
+			if configFile != "" {
+				break
+			}
+		}
 	}
 
-	configFile = filepath.Clean(configFile)
-
-	// We need an absolute filename to the config file.
-	if !filepath.IsAbs(configFile) {
-		configFile = t.rs.BaseFs.ResolveJSConfigFile(configFile)
-		if configFile == "" && t.options.Config != "" {
-			// Only fail if the user specified config file is not found.
-			return errors.Errorf("babel config %q not found:", configFile)
+	if configFile != "" {
+		configFile = filepath.Clean(configFile)
+		// We need an absolute filename to the config file.
+		if !filepath.IsAbs(configFile) {
+			configFile = t.rs.BaseFs.ResolveJSConfigFile(configFile)
+			if configFile == "" && t.options.Config != "" {
+				// Only fail if the user specified config file is not found.
+				return fmt.Errorf("babel config %q not found", t.options.Config)
+			}
 		}
 	}
 
 	ctx.ReplaceOutPathExtension(".js")
 
-	var cmdArgs []string
+	var cmdArgs []any
 
 	if configFile != "" {
-		logger.Infoln("babel: use config file", configFile)
-		cmdArgs = []string{"--config-file", configFile}
+		infol.Logf("use config file %q", configFile)
+		cmdArgs = []any{"--config-file", configFile}
 	}
 
 	if optArgs := t.options.toArgs(); len(optArgs) > 0 {
@@ -169,25 +164,21 @@ func (t *babelTransformation) Transform(ctx *resources.ResourceTransformationCtx
 	}
 	cmdArgs = append(cmdArgs, "--filename="+ctx.SourcePath)
 
-	// Create compile into a real temp file:
-	// 1. separate stdout/stderr messages from babel (https://github.com/gohugoio/hugo/issues/8136)
-	// 2. allow generation and retrieval of external source map.
-	compileOutput, err := ioutil.TempFile("", "compileOut-*.js")
+	var outBuf bytes.Buffer
+	stderr := io.MultiWriter(infoW, &errBuf)
+	cmdArgs = append(cmdArgs, hexec.WithStderr(stderr))
+	cmdArgs = append(cmdArgs, hexec.WithStdout(&outBuf))
+	cmdArgs = append(cmdArgs, hexec.WithDir(t.rs.Cfg.BaseConfig().WorkingDir))
+	cmdArgs = append(cmdArgs, hexec.WithEnviron(hugo.GetExecEnviron(t.rs.Cfg.BaseConfig().WorkingDir, t.rs.Cfg, t.rs.BaseFs.Assets.Fs)))
+
+	cmd, err := ex.Npx(binaryName, cmdArgs...)
 	if err != nil {
+		if hexec.IsNotFound(err) {
+			// This may be on a CI server etc. Will fall back to pre-built assets.
+			return &herrors.FeatureNotAvailableError{Cause: err}
+		}
 		return err
 	}
-
-	cmdArgs = append(cmdArgs, "--out-file="+compileOutput.Name())
-	defer os.Remove(compileOutput.Name())
-
-	cmd, err := hexec.SafeCommand(binary, cmdArgs...)
-	if err != nil {
-		return err
-	}
-
-	cmd.Stderr = io.MultiWriter(infoW, &errBuf)
-	cmd.Stdout = cmd.Stderr
-	cmd.Env = hugo.GetExecEnviron(t.rs.WorkingDir, t.rs.Cfg, t.rs.BaseFs.Assets.Fs)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -201,27 +192,22 @@ func (t *babelTransformation) Transform(ctx *resources.ResourceTransformationCtx
 
 	err = cmd.Run()
 	if err != nil {
-		return errors.Wrap(err, errBuf.String())
+		if hexec.IsNotFound(err) {
+			return &herrors.FeatureNotAvailableError{Cause: err}
+		}
+		return fmt.Errorf(errBuf.String()+": %w", err)
 	}
 
-	content, err := ioutil.ReadAll(compileOutput)
-	if err != nil {
-		return err
-	}
+	content := outBuf.Bytes()
 
-	mapFile := compileOutput.Name() + ".map"
-	if _, err := os.Stat(mapFile); err == nil {
-		defer os.Remove(mapFile)
-		sourceMap, err := ioutil.ReadFile(mapFile)
-		if err != nil {
-			return err
+	if t.options.SourceMap == "external" {
+		if sourceMap, stripped, ok := extractInlineSourceMap(content); ok {
+			if err = ctx.PublishSourceMap(sourceMap); err != nil {
+				return err
+			}
+			targetPath := path.Base(ctx.OutPath) + ".map"
+			content = append(stripped, ("//# sourceMappingURL=" + targetPath + "\n")...)
 		}
-		if err = ctx.PublishSourceMap(string(sourceMap)); err != nil {
-			return err
-		}
-		targetPath := path.Base(ctx.OutPath) + ".map"
-		re := regexp.MustCompile(`//# sourceMappingURL=.*\n?`)
-		content = []byte(re.ReplaceAllString(string(content), "//# sourceMappingURL="+targetPath+"\n"))
 	}
 
 	ctx.To.Write(content)
@@ -234,4 +220,18 @@ func (c *Client) Process(res resources.ResourceTransformer, options Options) (re
 	return res.Transform(
 		&babelTransformation{rs: c.rs, options: options},
 	)
+}
+
+var inlineSourceMapRe = regexp.MustCompile(`(?m)//# sourceMappingURL=data:application/json[^,]*,([A-Za-z0-9+/=]+)\s*$`)
+
+func extractInlineSourceMap(content []byte) (sourceMap, stripped []byte, ok bool) {
+	loc := inlineSourceMapRe.FindSubmatchIndex(content)
+	if loc == nil {
+		return nil, content, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(content[loc[2]:loc[3]]))
+	if err != nil {
+		return nil, content, false
+	}
+	return decoded, content[:loc[0]], true
 }

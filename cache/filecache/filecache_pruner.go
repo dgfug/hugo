@@ -14,12 +14,13 @@
 package filecache
 
 import (
+	"fmt"
 	"io"
 	"os"
 
+	"github.com/gohugoio/hugo/common/herrors"
 	"github.com/gohugoio/hugo/hugofs"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/afero"
 )
 
@@ -30,16 +31,15 @@ import (
 func (c Caches) Prune() (int, error) {
 	counter := 0
 	for k, cache := range c {
-
 		count, err := cache.Prune(false)
 
 		counter += count
 
 		if err != nil {
-			if os.IsNotExist(err) {
+			if herrors.IsNotExist(err) {
 				continue
 			}
-			return counter, errors.Wrapf(err, "failed to prune cache %q", k)
+			return counter, fmt.Errorf("failed to prune cache %q: %w", k, err)
 		}
 
 	}
@@ -50,8 +50,11 @@ func (c Caches) Prune() (int, error) {
 // Prune removes expired and unused items from this cache.
 // If force is set, everything will be removed not considering expiry time.
 func (c *Cache) Prune(force bool) (int, error) {
-	if c.pruneAllRootDir != "" {
-		return c.pruneRootDir(force)
+	if c.cfg.entryIsDir {
+		return c.pruneRootDirs(force)
+	}
+	if err := c.init(); err != nil {
+		return 0, err
 	}
 
 	counter := 0
@@ -69,14 +72,19 @@ func (c *Cache) Prune(force bool) (int, error) {
 				// This cache dir may not exist.
 				return nil
 			}
-			defer f.Close()
 			_, err = f.Readdirnames(1)
+			f.Close()
 			if err == io.EOF {
 				// Empty dir.
-				err = c.Fs.Remove(name)
+				if name == "." {
+					// e.g. /_gen/images -- keep it even if empty.
+					err = nil
+				} else {
+					err = c.Fs.Remove(name)
+				}
 			}
 
-			if err != nil && !os.IsNotExist(err) {
+			if err != nil && !herrors.IsNotExist(err) {
 				return err
 			}
 
@@ -85,10 +93,9 @@ func (c *Cache) Prune(force bool) (int, error) {
 
 		shouldRemove := force || c.isExpired(info.ModTime())
 
-		if !shouldRemove && len(c.nlocker.seen) > 0 {
+		if !shouldRemove && c.entryLocker.seen.Len() > 0 {
 			// Remove it if it's not been touched/used in the last build.
-			_, seen := c.nlocker.seen[name]
-			shouldRemove = !seen
+			shouldRemove = !c.entryLocker.seen.Has(name)
 		}
 
 		if shouldRemove {
@@ -97,7 +104,7 @@ func (c *Cache) Prune(force bool) (int, error) {
 				counter++
 			}
 
-			if err != nil && !os.IsNotExist(err) {
+			if err != nil && !herrors.IsNotExist(err) {
 				return err
 			}
 
@@ -109,10 +116,45 @@ func (c *Cache) Prune(force bool) (int, error) {
 	return counter, err
 }
 
-func (c *Cache) pruneRootDir(force bool) (int, error) {
-	info, err := c.Fs.Stat(c.pruneAllRootDir)
+func (c *Cache) pruneRootDirs(force bool) (int, error) {
+	dirs, err := afero.ReadDir(c.Fs, "")
 	if err != nil {
-		if os.IsNotExist(err) {
+		if herrors.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	counter := 0
+
+	for _, dir := range dirs {
+		if !dir.IsDir() {
+			continue
+		}
+
+		count, err := c.pruneRootDir(dir.Name(), force)
+		if err != nil {
+			return counter, err
+		}
+		counter += count
+	}
+
+	return counter, nil
+}
+
+func (c *Cache) pruneRootDir(dirname string, force bool) (int, error) {
+	if err := c.init(); err != nil {
+		return 0, err
+	}
+
+	// Sanity check.
+	if dirname != "pkg" && len(dirname) < 5 {
+		panic(fmt.Sprintf("invalid cache dir name: %q", dirname))
+	}
+
+	info, err := c.Fs.Stat(dirname)
+	if err != nil {
+		if herrors.IsNotExist(err) {
 			return 0, nil
 		}
 		return 0, err
@@ -122,5 +164,9 @@ func (c *Cache) pruneRootDir(force bool) (int, error) {
 		return 0, nil
 	}
 
-	return hugofs.MakeReadableAndRemoveAllModulePkgDir(c.Fs, c.pruneAllRootDir)
+	if c.cfg.isReadOnly {
+		return hugofs.MakeReadableAndRemoveAllModulePkgDir(c.Fs, dirname)
+	}
+
+	return 1, c.Fs.RemoveAll(dirname)
 }
